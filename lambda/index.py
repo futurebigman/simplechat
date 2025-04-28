@@ -1,10 +1,6 @@
 # lambda/index.py
 import json
-import os
-import boto3
-import re  # 正規表現モジュールをインポート
-from botocore.exceptions import ClientError
-import urllib.requests
+import urllib.request
 import time
 
 
@@ -19,17 +15,6 @@ class LLMClient:
             api_url (str): API のベース URL（ngrok URL）
         """
         self.api_url = api_url.rstrip('/')
-        self.session = urllib.requests.Session()
-    
-    def health_check(self):
-        """
-        ヘルスチェック
-        
-        Returns:
-            dict: ヘルスチェック結果
-        """
-        response = self.session.get(f"{self.api_url}/health")
-        return response.json()
     
     def generate(self, prompt, max_new_tokens=512, temperature=0.7, top_p=0.9, do_sample=True):
         """
@@ -54,18 +39,31 @@ class LLMClient:
         }
         
         start_time = time.time()
-        response = self.session.post(
-            f"{self.api_url}/generate",
-            json=payload
+        url = f"{self.api_url}/generate"
+        headers = {
+            'Content-Type': 'application/json',
+        }
+        req = urllib.request.Request(
+            url,
+            json.dumps(payload).encode('utf-8'),
+            headers,
+            method='POST',
         )
+        
+        with urllib.request.urlopen(req) as response:
+            statusCode = response.getcode()  # ここでステータスコード取得
+            body = response.read() # ここでボディ取得
+            body_text = body.decode('utf-8')
+            body_json = json.loads(body_text)
+        
         total_time = time.time() - start_time
         
-        if response.status_code == 200:
-            result = response.json()
+        if statusCode == 200:
+            result = body_json
             result["total_request_time"] = total_time
             return result
         else:
-            raise Exception(f"API error: {response.status_code} - {response.text}")
+            raise Exception(f"API error: {statusCode} - {body_text}")
 
 def lambda_handler(event, context):
     try:
@@ -91,7 +89,6 @@ def lambda_handler(event, context):
             "content": message
         })
         
-        # Nova Liteモデル用のリクエストペイロードを構築
         # 会話履歴を含める
         bedrock_messages = []
         for msg in messages:
@@ -113,9 +110,7 @@ def lambda_handler(event, context):
         
         print("Calling Bedrock invoke_model API with payload:", json.dumps(request_payload))
         
-        result = client.generate([
-            {"prompt": message} #ここをrequest_payload
-        ])
+        result = client.generate(message)
         
         # レスポンスを解析
         print("Bedrock response:", result)
